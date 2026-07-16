@@ -1,0 +1,26 @@
+# ---------------------------------------------------------------------------------------
+# Local (torch-free) development — enough to run the numpy math test and the data-prep
+# self-test on any machine WITHOUT PyTorch / mmdetection:
+#     python tests/test_numpy_ref.py
+#     python tools/prepare_tbx11k.py --selftest
+# ---------------------------------------------------------------------------------------
+numpy>=1.24
+pillow>=9
+opencv-python>=4.6        # imported as cv2 (used by data tooling / visualisation)
+matplotlib>=3.6
+
+# ---------------------------------------------------------------------------------------
+# Colab / GPU training stack (do NOT pip-install these locally on Windows CPU — they are
+# installed on Colab via `mim`; see notebooks/colab_runbook.ipynb, Phase 1). Kept commented
+# so this file stays installable locally.
+#
+#   torch / torchvision   -> use the version preinstalled on the Colab runtime
+#   openmim
+#   mmengine
+#   mmcv>=2.0.0,<2.2.0
+#   mmdet>=3.0.0,<3.4.0
+#   pycocotools
+#
+# The EXACT working versions are frozen to `requirements.lock.txt` during Phase 1 on Colab
+# (torch, mmcv, mmdet, mmengine) — record those in results.md.
+# ---------------------------------------------------------------------------------------

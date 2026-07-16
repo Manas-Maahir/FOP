@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Colab / training artifacts (kept on Google Drive, not in the repo)
+work_dirs/
+tb_runs/
+*.pth
+requirements.lock.txt   # regenerated on Colab in Phase 1
+
+# Data (large; lives on Drive or Colab's ephemeral /content)
+data/
+tbx11k_tb512/
+TBX11K/
+*.zip
+
+# Source paper (copyrighted; not needed to run anything — paper.md summarises it).
+# Delete this line if you want the PDF/DOCX tracked in the repo.
+Paper/
+
+# OS
+.DS_Store
+Thumbs.db
