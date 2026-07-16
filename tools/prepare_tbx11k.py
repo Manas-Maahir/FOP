@@ -122,6 +122,10 @@ def print_report(rep: dict) -> None:
     print(f"\nCandidate list (.txt) files: {len(rep['list_files'])}")
     for p in rep["list_files"][:12]:
         print("   ", p)
+    tr, va = pick_split_lists(rep)
+    print("\nSplit lists that WOULD be used:")
+    print("   train ->", tr or "(none found — would fall back to a deterministic 3:1 split)")
+    print("   val   ->", va or "(none found — would fall back to a deterministic 3:1 split)")
     print("\nXML class names found (sampled):")
     if rep["class_names"]:
         for c, n in rep["class_names"]:
@@ -137,13 +141,27 @@ def pick_xml_dir(rep: dict) -> Optional[str]:
     return rep["xml_dirs"][0][0] if rep["xml_dirs"] else None
 
 
-def guess_list(rep: dict, *keywords) -> Optional[str]:
-    """Find a .txt list file whose name contains all keywords (case-insensitive)."""
-    for p in rep["list_files"]:
-        low = os.path.basename(p).lower()
-        if all(k in low for k in keywords):
-            return p
-    return None
+def pick_split_lists(rep: dict):
+    """Choose the (train_list, val_list) pair from the discovered .txt files.
+
+    Careful: naive substring matching is wrong here. TBX11K ships
+    ``{TBX11K,all}_{train,val,trainval,test}.txt`` and **"trainval" contains both "train" and
+    "val"** — so a plain `"train" in name` test can select `all_trainval.txt` as the *training*
+    split, leaking val into train and silently inflating AP. We therefore exclude "trainval"
+    explicitly, and prefer the TBX11K_* pair over all_* (all_* additionally covers the
+    mc+shenzhen / da+db extras, which carry no TB boxes) so the pair is consistent.
+    """
+    def name(p):
+        return os.path.basename(p).lower()
+
+    def find(kind: str) -> Optional[str]:
+        opts = [p for p in rep["list_files"]
+                if kind in name(p) and "trainval" not in name(p) and "test" not in name(p)]
+        # prefer TBX11K_* over all_*, then alphabetical for determinism
+        opts.sort(key=lambda p: (0 if name(p).startswith("tbx11k") else 1, name(p)))
+        return opts[0] if opts else None
+
+    return find("train"), find("val")
 
 
 # --------------------------------------------------------------------------------------
@@ -279,13 +297,15 @@ def main(argv=None):
     print(f"indexed images: {rep['n_img']}")
 
     # splits: explicit flags > auto-discovered list files > deterministic 3:1 fallback
-    train_list = args.train_list or guess_list(rep, "train")
-    val_list = args.val_list or guess_list(rep, "val")
+    auto_train, auto_val = pick_split_lists(rep)
+    train_list = args.train_list or auto_train
+    val_list = args.val_list or auto_val
     train_ids, val_ids = read_id_list(train_list), read_id_list(val_list)
     all_stems = sorted(os.path.splitext(f)[0] for f in os.listdir(xml_dir) if f.endswith(".xml"))
 
     if train_ids and val_ids:
-        # keep only ids that actually have TB annotations
+        # The split lists cover ALL images (healthy/sick/tb); intersecting with the XML stems
+        # leaves exactly the TB images, which are the only ones with boxes.
         train_ids &= set(all_stems)
         val_ids &= set(all_stems)
         print(f"split lists   : train={train_list}\n                val={val_list}")
@@ -294,8 +314,17 @@ def main(argv=None):
         train_ids = set(s for s in all_stems if s not in val_ids)
         print("[warn] no usable train/val list files found; using a deterministic 3:1 split "
               "(DEVIATION from the official split — record this in results.md).")
+
+    overlap = train_ids & val_ids
+    if overlap:
+        print(f"ERROR: train and val overlap by {len(overlap)} images — the split lists are wrong "
+              f"(did one of them resolve to a *_trainval.txt?). Refusing to build a leaky dataset.",
+              file=sys.stderr)
+        return 2
     print(f"TB images     : train={len(train_ids)} val={len(val_ids)} "
-          f"(paper Table 2: ~600 / ~200)")
+          f"(paper Table 2: 600 / 200)")
+    if not (500 <= len(train_ids) <= 700 and 150 <= len(val_ids) <= 250):
+        print("[warn] split sizes differ from the paper's 600/200 — check the list files above.")
 
     os.makedirs(os.path.join(args.dst, "annotations"), exist_ok=True)
     for split, ids in (("train", train_ids), ("val", val_ids)):
@@ -348,6 +377,20 @@ def selftest():
     assert pick_xml_dir(rep) == xml_dir, pick_xml_dir(rep)
     assert dict(rep["class_names"]).keys() == {"ActiveTuberculosis", "ObsoletePulmonaryTuberculosis"}
     print("PASS layout discovery (xml dir, image index, class names)")
+
+    # Regression: the real TBX11K ships {TBX11K,all}_{train,val,trainval,test}.txt. "trainval"
+    # contains both "train" and "val", so naive substring matching can pick a trainval file as the
+    # training split (leaking val into train). Reproduce that exact filename set here.
+    lists_dir = os.path.join(src, "lists")
+    os.makedirs(lists_dir)
+    for fn in ("TBX11K_val.txt", "all_test.txt", "all_val.txt", "all_train.txt",
+               "TBX11K_trainval.txt", "TBX11K_train.txt", "all_trainval.txt"):
+        open(os.path.join(lists_dir, fn), "w").write("caseA\n")
+    rep2 = discover_layout(src)
+    tr, va = pick_split_lists(rep2)
+    assert os.path.basename(tr) == "TBX11K_train.txt", tr
+    assert os.path.basename(va) == "TBX11K_val.txt", va
+    print("PASS split-list selection (rejects *_trainval.txt, prefers the matching TBX11K_ pair)")
 
     os.makedirs(os.path.join(dst, "annotations"), exist_ok=True)
     for split, ids in (("train", {"caseA"}), ("val", {"caseB"})):
