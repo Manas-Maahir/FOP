@@ -38,10 +38,9 @@ def main(argv=None):
     args = parse_args(argv)
 
     import torch
-    from pycocotools.coco import COCO
-    from pycocotools.cocoeval import COCOeval
     from symformer_tb.tv_model import build_model
     from symformer_tb.tv_dataset import build_loader
+    from symformer_tb.evaluate import predict_coco, score_coco
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
@@ -60,39 +59,13 @@ def main(argv=None):
                           num_workers=args.num_workers)
     print(f"val images: {len(loader.dataset)}")
 
-    results = []
-    with torch.no_grad():
-        for images, targets in loader:
-            images = [im.to(device) for im in images]
-            outputs = model(images)
-            for out, t in zip(outputs, targets):
-                img_id = int(t["image_id"])
-                boxes = out["boxes"].cpu()
-                scores = out["scores"].cpu()
-                labels = out["labels"].cpu()
-                for b, s, l in zip(boxes, scores, labels):
-                    x1, y1, x2, y2 = [float(v) for v in b]
-                    results.append({
-                        "image_id": img_id,
-                        "category_id": int(l),
-                        "bbox": [x1, y1, x2 - x1, y2 - y1],   # xyxy -> COCO xywh
-                        "score": float(s),
-                    })
-
+    results = predict_coco(model, loader, device)          # infer once
     if not results:
         print("NO DETECTIONS — AP is 0. (Expected for an untrained/1-epoch smoke model.)")
-        ap = ap50 = 0.0
-    else:
-        coco_gt = COCO(ann_file)
-        with contextlib.redirect_stdout(io.StringIO()):
-            coco_dt = coco_gt.loadRes(results)
-        E = COCOeval(coco_gt, coco_dt, "bbox")
-        E.evaluate()
-        E.accumulate()
-        E.summarize()
-        ap, ap50 = float(E.stats[0]), float(E.stats[1])
+    ap, ap50 = score_coco(results, ann_file)               # ...then score
+    n_dets = len(results)
 
-    print(f"\n==== RESULT ====\nAP   (IoU .50:.95) = {ap*100:.1f}\nAP50 (IoU .50)     = {ap50*100:.1f}")
+    print(f"\n==== RESULT ====\nAP   (IoU .50:.95) = {ap:.1f}\nAP50 (IoU .50)     = {ap50:.1f}")
 
     work_dir = os.path.dirname(os.path.abspath(args.ckpt))
     tag = args.tag or os.path.basename(work_dir)
