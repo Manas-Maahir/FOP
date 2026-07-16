@@ -16,27 +16,36 @@ over a plain RetinaNet — on the **TB-only** subset of TBX11K, at 512², on a f
 | [limitations.md](limitations.md) | Caveats of the paper and of this PoC. |
 | [results.md](results.md) | Where run numbers get recorded. |
 
+## Stack: torch + torchvision (no mmdetection)
+The paper used mmdetection, but OpenMMLab publishes `mmcv` wheels only up to ~torch 2.1 / Python
+3.11 and has been effectively unmaintained since 2023 — on Colab's Python 3.12 `mim install mmcv`
+falls into a source build that fails. We use **torchvision's `retinanet_resnet50_fpn`**: the same
+ResNet-50 + FPN + RetinaNet architecture, preinstalled on Colab, **zero installs**. The SAS block is
+framework-agnostic pure torch, so the novel code is unchanged. See `limitations.md` for what this
+costs us in comparability.
+
 ## Repository layout
 ```
 symformer_tb/            the ONLY novel code (the SAS block)
-  sas.py                 SPE, SymAttention (grid_sample-based), FFN, SASBlock  [torch]
-  mmdet_plugin.py        SASFPN neck = FPN + shared SAS; registers with mmdet  [torch+mmdet]
+  sas.py                 SPE, SymAttention (grid_sample-based), FFN, SASBlock  [pure torch]
+  tv_model.py            RetinaNet-R50-FPN + shared SAS after the FPN          [torchvision]
+  tv_dataset.py          COCO dataset + random hflip for the torchvision API
   _numpy_ref.py          numpy reference for the mirror/PE math (torch-free oracle)
-configs/
-  retinanet_r50_fpn_tbx11k_512.py          RetinaNet baseline (Phase 5)
-  symformer_retinanet_r50_fpn_tbx11k_512.py  full SymFormer (Phase 7)
-  ablation/              12 Table-8 ablation configs (auto-generated) + README
 tools/
   prepare_tbx11k.py      TBX11K -> compact TB-only 512 COCO (Phase 3); has --selftest
-  make_ablation_configs.py  regenerate the ablation configs
-  train_runner.py        mmengine training runner (with --resume for T4 time-outs)
-  test_runner.py         mmengine eval runner (COCO AP/AP50)
+  tv_train.py            training loop; checkpoint + auto-resume for T4 time-outs
+  tv_eval.py             COCO AP/AP50 via pycocotools
 tests/
   test_numpy_ref.py      mirror/PE math — runs locally with numpy only
-  test_sas.py            the 4 required SAS tests + numpy cross-checks — runs on Colab (torch)
+  test_sas.py            the 4 required SAS tests + numpy cross-checks   [Colab]
+  test_tv_model.py       RetinaNet+SAS wiring, weight sharing, train/infer [Colab]
 notebooks/
   colab_runbook.ipynb    drives Phases 1-10 on Colab
 ```
+
+The ablation is driven by **CLI flags**, not config files:
+`--attention {vanilla,symattention} --pe {none,ape,rpe,spe} --stn/--no-stn --direction {r2l,l2r}`,
+with `--no-sas` for the baseline.
 
 ## Run it
 
@@ -80,6 +89,9 @@ Checkpoints are ~300 MB each (model + optimizer), so configs keep only the lates
 - [ ] Results recorded in `results.md` (Phase 10).
 
 ## Key deviations from the paper (see code comments + `limitations.md`)
+- **torchvision instead of mmdetection** (mmcv is unbuildable on Colab's Python 3.12) — same
+  architecture, but anchors/loss/NMS defaults differ, so absolute numbers won't match the paper.
 - Deformable sampling uses `F.grid_sample` instead of the Deformable-DETR CUDA op (no compile step).
 - 1-class (category-agnostic) detector so COCO AP/AP50 is the primary metric directly.
 - TB-only data at 512²; classification head + non-TB images out of scope; evaluated on **val**.
+- "RPE" is approximated as a learnable per-(head, point) attention bias.

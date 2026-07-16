@@ -53,17 +53,17 @@ single T4 mean magnitudes will differ; the *ordering* is what we are verifying.
 - Open a new Colab notebook; set the runtime to **GPU**; run the GPU check; confirm a **T4** is attached
   and note its VRAM. If Colab grants no GPU, stop and retry later (the free tier sometimes refuses).
 - **Mount Google Drive.**
-- Detect the **torch + CUDA** versions Colab currently ships. Choose a **mutually compatible**
-  **mmcv** + **mmdetection** version combination for that torch/CUDA, install them, and confirm each
-  package imports and reports its version. *Torch↔mmcv↔mmdet version drift is the single most common
-  failure — get a working set and pin it immediately.*
-- Confirm the **deformable-attention CUDA op** (the multi-scale deformable attention used by
-  Deformable DETR) builds/loads — SymAttention depends on it.
-- Freeze the exact working versions into `requirements.txt` in the repo.
-- **GATE:** a stock, unmodified mmdetection RetinaNet can be instantiated and run **one forward pass on
-  the GPU** without error; the deformable-attention op loads.
-- **RECORD:** the full pinned version list (python, torch, CUDA, mmcv, mmdetection, pycocotools) into
-  `requirements.txt` and `results.md`.
+- **No mmcv/mmdetection.** (Tried and rejected: OpenMMLab ships `mmcv` wheels only up to ~torch 2.1 /
+  Python 3.11 and is unmaintained since 2023; Colab runs Python 3.12, so `mim install mmcv` falls
+  into a failing source build. `pip install -U openmim` also downgrades setuptools and breaks
+  `pkg_resources` on 3.12.) We use **torchvision's `retinanet_resnet50_fpn`** — same architecture,
+  preinstalled, **zero installs**.
+- Print the python / torch / torchvision versions and confirm CUDA is visible; install `pycocotools`
+  only if missing. Freeze versions into `requirements.lock.txt`.
+- **GATE:** `tests/test_tv_model.py` passes — RetinaNet+SAS builds, the SAS weights are shared across
+  pyramid levels, a training step yields finite losses with gradients reaching the SAS block, and
+  inference returns detections.
+- **RECORD:** the version list (python, torch, torchvision, pycocotools) in `results.md`.
 
 ---
 

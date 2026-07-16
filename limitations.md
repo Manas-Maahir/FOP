@@ -67,11 +67,23 @@ See [paper.md](paper.md) and [CLAUDE.md](CLAUDE.md) for context.
    (and rescaling LR) is itself a deviation from the paper that can shift results.
 
 ### Engineering / fidelity
-7. **Reimplemented modules.** If the official SymFormer (TPAMI) code is unreleased or incompatible,
-   we reimplement **SPE** and **SymAttention** from the equations on top of mmdetection — small
-   differences (mirror-coordinate handling, STN init, sampling op) can affect numbers.
-8. **Version drift.** torch / CUDA / mmcv / mmdetection compatibility is brittle; the exact stack we
-   pin will differ from the authors', another source of small discrepancies.
+7. **Reimplemented modules.** The official SymFormer (TPAMI) code was not usable for us, so **SPE**
+   and **SymAttention** are reimplemented from the equations — small differences (mirror-coordinate
+   handling, STN init, sampling op) can affect numbers.
+8. **Different detection framework (torchvision, not mmdetection).** The paper used mmdetection, but
+   OpenMMLab publishes `mmcv` wheels only up to ~torch 2.1 / Python 3.11 while Colab now runs
+   Python 3.12 — `mim install mmcv` falls into a source build that fails, and mmdetection has been
+   effectively unmaintained since 2023. We therefore build on **torchvision's
+   `retinanet_resnet50_fpn`**, which is the same ResNet-50 + FPN + RetinaNet architecture. The
+   science is unchanged (our SAS block is framework-agnostic pure torch), but anchor settings,
+   loss details, NMS defaults, and the training loop differ from mmdetection's, so absolute numbers
+   will not line up with the paper's even before the reduced-data effect.
+9. **Deformable sampling via `grid_sample`.** We use `F.grid_sample` rather than Deformable-DETR's
+   custom CUDA op — equivalent at single scale and needs no compilation, but not bit-identical.
+10. **"RPE" is an approximation.** Relative positional encoding is ill-defined for deformable
+    attention (which predicts attention weights directly rather than from query-key dot products);
+    we implement it as a learnable per-(head, point) bias on the attention logits. The paper's
+    RPE < APE finding may therefore not reproduce faithfully.
 9. **Unspecified details.** Hyper-parameters not stated in the paper are filled with mmdetection /
    Deformable-DETR defaults; each such choice is a potential divergence and will be noted in
    [CLAUDE.md](CLAUDE.md).

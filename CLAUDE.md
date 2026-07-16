@@ -12,7 +12,8 @@ documents the plan we agreed on before coding.
 ## 0. Decisions (locked)
 | Decision | Choice | Why |
 |---|---|---|
-| **Approach** | **Hybrid** | Use the official TBX11K dataset; build SymFormer's novel modules on a maintained detection stack (**mmdetection**) rather than running the authors' old code verbatim or rewriting everything from scratch. |
+| **Approach** | **Hybrid** | Use the official TBX11K dataset; build SymFormer's novel modules on a maintained detection stack rather than running the authors' old code verbatim or rewriting everything from scratch. |
+| **Detection stack** | **torchvision** (was: mmdetection) | mmcv/mmdet ship wheels only up to ~torch 2.1 / Py 3.11 and are unmaintained since 2023; Colab is on **Py 3.12**, so `mim install mmcv` falls into a failing source build. torchvision's `retinanet_resnet50_fpn` is the same ResNet-50+FPN+RetinaNet architecture, is preinstalled on Colab, and needs **zero installs**. Our SAS block is pure torch → unchanged. |
 | **Scope** | **Core-method PoC** | Reproduce the paper's *central claim*, not the full grid: **SymFormer w/ RetinaNet (ResNet-50) > RetinaNet baseline** on TB detection, plus the **Table 8 ablation**. |
 | **Compute** | **Colab Free (T4)** | Single 16 GB T4 with session time-outs → checkpoint/resume + Google Drive persistence + a compact dataset are mandatory. |
 
