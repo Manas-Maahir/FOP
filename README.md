@@ -50,10 +50,26 @@ These two are the parts that can be checked without torch/mmdet, and both pass. 
 mmdet (the SAS forward pass, training, evaluation) runs on Colab.
 
 ### On Colab — the full pipeline
-Open `notebooks/colab_runbook.ipynb`, set the runtime to **GPU**, and run top-to-bottom. It installs
-the mm stack, runs the SAS unit tests, builds the compact dataset from your TBX11K copy on Drive,
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Manas-Maahir/FOP/blob/main/notebooks/colab_runbook.ipynb)
+
+Open `notebooks/colab_runbook.ipynb` (badge above), set the runtime to **GPU**, and run top-to-bottom.
+It clones this repo, installs the mm stack, runs the SAS unit tests, builds the compact dataset,
 smoke-tests, then trains/evaluates the baseline, SymFormer, and the ablation. Training cells use
 `--resume`, so after a session time-out just re-run the same cell.
+
+**Storage split** — free Drive is 15GB, but the Colab VM has ~100GB of ephemeral disk:
+
+| What | Where | Size |
+|---|---|---|
+| code / configs / docs | GitHub → `/content/FOP` | ~200 KB |
+| raw TBX11K | **`/content`** (ephemeral — never on Drive) | ~11–30 GB |
+| compact TB-only 512² dataset | **Drive** | ~250–400 MB |
+| checkpoints (baseline + SymFormer) + logs | **Drive** | ~600 MB + ~300 MB transient per ablation cell |
+| **Drive total** | | **~1.5 GB peak** |
+
+Checkpoints are ~300 MB each (model + optimizer), so configs keep only the latest
+(`max_keep_ckpts=1`) and the ablation loop deletes weights after each cell is evaluated. Set
+`DELETE_CKPTS_AFTER_EVAL = False` to keep them all (~5 GB).
 
 ## Status
 - [x] Novel code implemented: SAS = SPE + SymAttention + FFN (`symformer_tb/`).
