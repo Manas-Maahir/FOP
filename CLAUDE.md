@@ -105,11 +105,24 @@ Run sequentially; each phase must finish (or checkpoint) before the next.
 |---|---|---|
 | code / configs / docs | **GitHub** (cloned to `/content/FOP`) | tiny, versioned |
 | raw TBX11K (~tens of GB) | **`/content`** (ephemeral) | download → prep → discard; never on Drive |
-| compact TB-only 512² dataset (~few hundred MB) | **Drive** | expensive to rebuild |
-| checkpoints + logs | **Drive** | needed to resume after a time-out |
+| compact TB-only 512² dataset (~few hundred MB) | **Drive** | expensive to rebuild (needs the raw set back) |
+| checkpoints (~300MB/epoch) | **`/content/work`** (ephemeral) | a full run is only ~15–20 min, so retraining is cheaper than storing — and Drive deletions go to Trash, which keeps counting against the quota |
+| logs (`train_log.jsonl` / `eval_log.jsonl`, KB) — **the results** | **Drive** | tiny, and they carry every AP/AP50 |
 
-> Checkpoints are ~300MB each (model + optimizer), so configs keep only the latest
-> (`max_keep_ckpts=1`) and the ablation loop deletes weights after each cell is evaluated.
+> **Weights never go on Drive.** Colab's Drive mount turns every delete into a move to Drive's
+> **Trash**, and trashed files count against the 15GB quota for 30 days. Since training writes
+> ~300MB per epoch and prunes the previous one, a 24-epoch run silently trashes ~7GB — and the
+> Table 8 ablation would trash ~90GB. Point `--work-dir` at `/content/work/<run>` and pass
+> `--drive-sync <drive_dir>` to copy just the logs. `tv_train.py` warns loudly if `--work-dir`
+> lands on Drive.
+>
+> `max_keep_ckpts=1` and the ablation loop's post-eval delete now bound only `/content` (~66GB
+> free), not Drive. Total expected Drive usage: **~350MB**.
+>
+> Cost of this: cross-session resume is gone (weights die with the session). That's ~20 min of
+> retraining versus 7GB of quota — worth it. `last.pth` still gives within-session resume. The
+> headline number is the **final-epoch AP**, which is already in the logs, so the weights are
+> genuinely disposable; `--sync-weights` opts one model back onto Drive if you want it for a figure.
 
 **Setup checklist (per session):**
 1. `nvidia-smi` — confirm a GPU is attached (free tier may deny one).

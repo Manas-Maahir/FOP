@@ -2,15 +2,22 @@
 """Train RetinaNet (baseline) or SymFormer (RetinaNet + SAS) on the TB-only 512 COCO set.
 
 Implements the paper's stage-1 detection recipe: SGD, batch 8, 24 epochs, 512x512, random
-horizontal flip, fixed seed. Checkpoints every epoch to --work-dir and auto-resumes, so a Colab
-time-out costs at most the current epoch (point --work-dir at Google Drive).
+horizontal flip, fixed seed. Checkpoints every epoch to --work-dir and auto-resumes.
+
+Storage: keep --work-dir on /content (ephemeral VM disk, ~100GB) and let --drive-sync copy the
+tiny logs to Drive. Do NOT point --work-dir at Drive: checkpoints are ~300MB/epoch and Colab's
+Drive mount turns our pruning of the previous one into a move to Trash, which keeps counting
+against the 15GB quota (~7GB trashed per 24-epoch run). A run takes ~15-20min, so retraining is
+cheaper than storing, and the logs already hold every AP/AP50.
 
 Baseline (Table 8 "No / No"):
-    python tools/tv_train.py --work-dir RUNS/baseline --data-root DATA/ --no-sas
+    python tools/tv_train.py --work-dir /content/work/baseline --data-root DATA/ --no-sas \
+        --drive-sync /content/drive/MyDrive/tb_runs/baseline
 
 Full SymFormer (SymAttention + SPE + STN, right->left):
-    python tools/tv_train.py --work-dir RUNS/symformer --data-root DATA/ \
-        --attention symattention --pe spe --stn --direction r2l
+    python tools/tv_train.py --work-dir /content/work/symformer --data-root DATA/ \
+        --attention symattention --pe spe --stn --direction r2l \
+        --drive-sync /content/drive/MyDrive/tb_runs/symformer
 
 Ablation cells vary --attention / --pe / --stn / --direction.
 """
@@ -23,6 +30,7 @@ import math
 import os
 import sys
 import time
+from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -30,9 +38,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 def parse_args(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--work-dir", required=True,
-                    help="checkpoints + logs. Prefer /content/... (ephemeral): checkpoints are "
-                         "~300MB and a full run here is only ~15-20min, so Drive is not worth the "
-                         "quota. Use --drive-sync to copy the tiny logs (and best.pth) to Drive.")
+                    help="checkpoints + logs. MUST be on /content (ephemeral), never Drive: "
+                         "checkpoints are ~300MB/epoch and Colab's Drive mount sends deletions to "
+                         "Trash, which keeps counting against the 15GB quota. A full run here is "
+                         "only ~15-20min, so retraining is cheaper than storing. Use --drive-sync "
+                         "to copy the tiny logs to Drive.")
     ap.add_argument("--data-root", required=True, help="compact dataset root (tbx11k_tb512)")
     ap.add_argument("--train-ann", default="annotations/tb_train_agnostic.json")
     ap.add_argument("--train-img", default="images/train")
@@ -42,7 +52,13 @@ def parse_args(argv=None):
                     help="run val AP every N epochs (0 disables). Gives the convergence curve and "
                          "drives best.pth selection.")
     ap.add_argument("--drive-sync", default=None,
-                    help="optional Drive dir to copy logs + best.pth into after each eval")
+                    help="optional Drive dir to copy the logs into after each epoch. Logs are a few "
+                         "KB and hold every AP/AP50 — they ARE the results. Weights stay on "
+                         "--work-dir unless --sync-weights.")
+    ap.add_argument("--sync-weights", action="store_true",
+                    help="also copy best.pth (~300MB) to --drive-sync. Off by default: the headline "
+                         "number is the final-epoch AP, which is already in the logs, so weights are "
+                         "disposable. Turn on only to keep one model (e.g. for a figure).")
     # SAS options (omit --no-sas to enable the SAS block)
     ap.add_argument("--no-sas", action="store_true", help="plain RetinaNet baseline")
     ap.add_argument("--attention", default="symattention", choices=["vanilla", "symattention"])
@@ -65,7 +81,7 @@ def parse_args(argv=None):
     ap.add_argument("--num-workers", type=int, default=2)
     ap.add_argument("--image-size", type=int, default=512)
     ap.add_argument("--max-keep-ckpts", type=int, default=1,
-                    help="checkpoints are ~300MB; keep few to bound Drive usage")
+                    help="checkpoints are ~300MB; keep few to bound --work-dir disk usage")
     ap.add_argument("--limit-batches", type=int, default=0, help="smoke test: stop after N batches")
     return ap.parse_args(argv)
 
@@ -79,6 +95,7 @@ def main(argv=None):
     from symformer_tb.evaluate import evaluate_model
 
     torch.manual_seed(args.seed)
+    _warn_if_work_dir_on_drive(args.work_dir)
     os.makedirs(args.work_dir, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device={device} seed={args.seed}")
@@ -191,7 +208,7 @@ def main(argv=None):
             torch.save(ckpt, os.path.join(args.work_dir, "best.pth"))
             print(f"  ** new best AP50 {best_ap50:.1f} @ epoch {epoch+1} -> best.pth")
         _prune_ckpts(args.work_dir, args.max_keep_ckpts)
-        _drive_sync(args.work_dir, args.drive_sync)
+        _drive_sync(args.work_dir, args.drive_sync, args.sync_weights)
 
     print(f"training complete -> {args.work_dir}")
     if best_epoch >= 0:
@@ -201,14 +218,47 @@ def main(argv=None):
     return 0
 
 
-def _drive_sync(work_dir: str, drive_dir: Optional[str]):
-    """Copy the small stuff (logs + best.pth) to Drive; tolerate a full/unavailable Drive."""
+def _warn_if_work_dir_on_drive(work_dir: str):
+    """A --work-dir on Drive quietly burns the 15GB quota; say so loudly.
+
+    Colab's Drive mount turns every deletion into a move to Drive's Trash, and trashed files keep
+    counting against quota for 30 days. Since we write ~300MB per epoch and prune the previous one,
+    a 24-epoch run silently trashes ~7GB. Warn rather than fail: someone with a big Drive may
+    legitimately want this.
+
+    Substring rather than prefix match: abspath() on a non-Colab box prepends a drive letter
+    (C:/content/drive/...), which would slip past startswith() and make this untestable off-Colab.
+    """
+    if "/content/drive/" in os.path.abspath(work_dir).replace("\\", "/"):
+        # ASCII only: this runs before training on whatever console the user has, and a
+        # UnicodeEncodeError here would kill the run the warning exists to protect.
+        print("=" * 78)
+        print("!! --work-dir is on Google Drive. Checkpoints are ~300MB/epoch and Colab's Drive")
+        print("   mount sends deletions to TRASH, which still counts against your quota: a")
+        print("   24-epoch run will trash ~7GB. Prefer:")
+        print("       --work-dir /content/work/<run>  --drive-sync <drive_dir>")
+        print("   which keeps weights on the VM's ephemeral disk and copies only the tiny logs.")
+        print("=" * 78)
+
+
+def _drive_sync(work_dir: str, drive_dir: Optional[str], sync_weights: bool = False):
+    """Copy the logs (and optionally best.pth) to Drive; tolerate a full/unavailable Drive.
+
+    Logs only by default. They are a few KB, they carry every AP/AP50, and the headline number is
+    the final-epoch AP — so the logs are the results and the ~300MB weights are disposable.
+
+    Only train_log.jsonl is ours. eval_log.jsonl belongs to tv_eval.py, which appends its own
+    entries to Drive; copying it from here would overwrite that accumulated history.
+    """
     if not drive_dir:
         return
     import shutil
+    names = ["train_log.jsonl"]
+    if sync_weights:
+        names.append("best.pth")
     try:
         os.makedirs(drive_dir, exist_ok=True)
-        for name in ("train_log.jsonl", "eval_log.jsonl", "best.pth"):
+        for name in names:
             src = os.path.join(work_dir, name)
             if os.path.isfile(src):
                 shutil.copy2(src, os.path.join(drive_dir, name))

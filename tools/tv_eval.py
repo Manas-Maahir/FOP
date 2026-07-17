@@ -4,9 +4,12 @@
 This is the metric the whole PoC turns on — the primary claim is that SymFormer's AP50 exceeds the
 baseline's. The SAS config is read from the checkpoint, so you don't have to repeat the flags.
 
-    python tools/tv_eval.py --ckpt RUNS/symformer/epoch_24.pth --data-root DATA/
+    python tools/tv_eval.py --ckpt /content/work/symformer/epoch_24.pth --data-root DATA/ \
+        --drive-sync /content/drive/MyDrive/tb_runs/symformer
 
-Appends a one-line JSON record to <work-dir>/eval_log.jsonl and prints AP/AP50.
+Appends a one-line JSON record to <ckpt-dir>/eval_log.jsonl and prints AP/AP50. Since checkpoints
+live on ephemeral /content, pass --drive-sync to copy that log to Drive — otherwise the result dies
+with the session.
 """
 
 from __future__ import annotations
@@ -31,6 +34,9 @@ def parse_args(argv=None):
     ap.add_argument("--num-workers", type=int, default=2)
     ap.add_argument("--image-size", type=int, default=512)
     ap.add_argument("--tag", default=None, help="name for the results log (defaults to ckpt dir)")
+    ap.add_argument("--drive-sync", default=None,
+                    help="Drive dir to copy eval_log.jsonl into. Checkpoints live on ephemeral "
+                         "/content, so without this the result is lost when the session ends.")
     return ap.parse_args(argv)
 
 
@@ -72,9 +78,23 @@ def main(argv=None):
     rec = {"tag": tag, "ckpt": os.path.basename(args.ckpt), "sas_cfg": sas_cfg,
            "AP": round(ap * 100, 2), "AP50": round(ap50 * 100, 2),
            "n_val": len(loader.dataset), "n_dets": len(results)}
+    line = json.dumps(rec) + "\n"
     with open(os.path.join(work_dir, "eval_log.jsonl"), "a") as f:
-        f.write(json.dumps(rec) + "\n")
+        f.write(line)
     print("logged ->", os.path.join(work_dir, "eval_log.jsonl"))
+
+    # The checkpoint dir is on ephemeral /content, so persist the result itself to Drive. Append
+    # rather than copy: a re-run in a later session has a fresh (empty) /content log, and copying
+    # would overwrite the earlier results with just this one.
+    if args.drive_sync:
+        try:
+            os.makedirs(args.drive_sync, exist_ok=True)
+            with open(os.path.join(args.drive_sync, "eval_log.jsonl"), "a") as f:
+                f.write(line)
+            print("synced ->", os.path.join(args.drive_sync, "eval_log.jsonl"))
+        except OSError as e:
+            # e.g. "Google Drive storage quota has been exceeded" — the number is already printed
+            print(f"[warn] drive sync failed ({e}); result remains in {work_dir}")
     return 0
 
 
