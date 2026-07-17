@@ -75,8 +75,9 @@ def main(argv=None):
 
     work_dir = os.path.dirname(os.path.abspath(args.ckpt))
     tag = args.tag or os.path.basename(work_dir)
+    # score_coco already returns percentages (0-100); do NOT scale again.
     rec = {"tag": tag, "ckpt": os.path.basename(args.ckpt), "sas_cfg": sas_cfg,
-           "AP": round(ap * 100, 2), "AP50": round(ap50 * 100, 2),
+           "AP": round(ap, 2), "AP50": round(ap50, 2),
            "n_val": len(loader.dataset), "n_dets": len(results)}
     line = json.dumps(rec) + "\n"
     with open(os.path.join(work_dir, "eval_log.jsonl"), "a") as f:
