@@ -77,6 +77,10 @@ def parse_args(argv=None):
     ap.add_argument("--weight-decay", type=float, default=1e-4)
     ap.add_argument("--milestones", type=int, nargs="+", default=[16, 22])
     ap.add_argument("--warmup-iters", type=int, default=500)
+    ap.add_argument("--grad-clip", type=float, default=10.0,
+                    help="clip gradient L2 norm to this before each step (0 disables). torchvision "
+                         "RetinaNet can spike bbox_regression to ~1e34 as the warmup LR peaks and "
+                         "then NaN out; clipping is the standard detection-training guard against it.")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--num-workers", type=int, default=2)
     ap.add_argument("--image-size", type=int, default=512)
@@ -164,6 +168,10 @@ def main(argv=None):
             loss = sum(loss_dict.values())
             if not math.isfinite(loss.item()):
                 print("non-finite loss, stopping:", {k: v.item() for k, v in loss_dict.items()})
+                print(f"[hint] training diverged with lr={args.lr}, grad_clip={args.grad_clip}. "
+                      "Lower the peak LR (e.g. --lr 0.0025) or tighten the clip (e.g. --grad-clip 5) "
+                      "and re-run with a FRESH --work-dir (delete the old one so it doesn't resume "
+                      "from the diverged checkpoint).")
                 return 1
 
             # linear warmup
@@ -174,6 +182,8 @@ def main(argv=None):
 
             optimizer.zero_grad()
             loss.backward()
+            if args.grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(params, args.grad_clip)
             optimizer.step()
             running += loss.item()
             global_step += 1

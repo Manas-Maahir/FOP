@@ -77,7 +77,11 @@ See [paper.md](paper.md) and [CLAUDE.md](CLAUDE.md) for context.
    `retinanet_resnet50_fpn`**, which is the same ResNet-50 + FPN + RetinaNet architecture. The
    science is unchanged (our SAS block is framework-agnostic pure torch), but anchor settings,
    loss details, NMS defaults, and the training loop differ from mmdetection's, so absolute numbers
-   will not line up with the paper's even before the reduced-data effect.
+   will not line up with the paper's even before the reduced-data effect. One concrete consequence:
+   torchvision's RetinaNet spikes `bbox_regression` toward ~1e34 and NaNs out as the warmup LR nears
+   its peak at this batch size, so we add **gradient clipping** (default max-norm 10, `--grad-clip`)
+   — a standard detection-training guard that the paper's mmdetection recipe did not need. This is a
+   deviation from the paper's stated settings, noted here for the record.
 9. **Deformable sampling via `grid_sample`.** We use `F.grid_sample` rather than Deformable-DETR's
    custom CUDA op — equivalent at single scale and needs no compilation, but not bit-identical.
 10. **"RPE" is an approximation.** Relative positional encoding is ill-defined for deformable
