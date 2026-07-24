@@ -1,5 +1,16 @@
 #!/usr/bin/env python
-"""Train RetinaNet (baseline) or SymFormer (RetinaNet + SAS) on the TB-only 512 COCO set.
+"""LEGACY (Colab). Superseded by ``tools/train.py`` -- use that one locally.
+
+Kept so ``notebooks/colab_runbook.ipynb`` still runs as the record of what was originally done. It
+is built around Colab's constraints (ephemeral /content, a 15 GB Drive quota, --drive-sync) that do
+not apply on a local machine, and it has no progress bar, run directory, plots, AMP or EMA.
+
+    local equivalent:  python tools/train.py --data-root DATA/ --no-sas
+    see also:          notebooks/local_runbook.ipynb
+
+---
+
+Train RetinaNet (baseline) or SymFormer (RetinaNet + SAS) on the TB-only 512 COCO set.
 
 Implements the paper's stage-1 detection recipe: SGD, batch 8, 24 epochs, 512x512, random
 horizontal flip, fixed seed. Checkpoints every epoch to --work-dir and auto-resumes.

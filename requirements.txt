@@ -1,26 +1,43 @@
 # ---------------------------------------------------------------------------------------
-# Local (torch-free) development — enough to run the numpy math test and the data-prep
-# self-test on any machine WITHOUT PyTorch / mmdetection:
-#     python tests/test_numpy_ref.py
-#     python tools/prepare_tbx11k.py --selftest
+# DO NOT `pip install -r` THIS FILE to set up training.
+#
+# The training stack has hard cross-version constraints (mmcv's prebuilt Windows wheels
+# exist only for cp38-cp311 and are built against torch 2.1.0; mmdet asserts mmcv < 2.2.0;
+# mmcv is compiled against the numpy 1.x ABI). A plain `pip install` resolves none of that.
+#
+# Use the bootstrapper, which pins the whole set, verifies each stage, and writes
+# requirements.lock.txt with the exact versions that worked on your machine:
+#
+#     python scripts/setup_env.py
+#
+# or just open notebooks/local_runbook.ipynb and Run All -- it calls the same script.
 # ---------------------------------------------------------------------------------------
-numpy>=1.24
+
+# ---------------------------------------------------------------------------------------
+# What this file IS for: the torch-free subset, so the framework-independent tests run on
+# any machine with nothing installed.
+#
+#     pip install -r requirements.txt
+#     python tests/test_numpy_ref.py             # mirror + positional-encoding maths
+#     python tests/test_metrics.py               # IoU / PR / F1 / AUC, hand-checked
+#     python tools/prepare_tbx11k.py --selftest  # resize + box scaling + COCO output
+# ---------------------------------------------------------------------------------------
+numpy>=1.24,<2
 pillow>=9
-opencv-python>=4.6        # imported as cv2 (used by data tooling / visualisation)
 matplotlib>=3.6
 
 # ---------------------------------------------------------------------------------------
-# Colab / GPU training stack (do NOT pip-install these locally on Windows CPU — they are
-# installed on Colab via `mim`; see notebooks/colab_runbook.ipynb, Phase 1). Kept commented
-# so this file stays installable locally.
+# For reference, the pins scripts/setup_env.py installs into .venv (Python 3.11):
 #
-#   torch / torchvision   -> use the version preinstalled on the Colab runtime
-#   openmim
-#   mmengine
-#   mmcv>=2.0.0,<2.2.0
-#   mmdet>=3.0.0,<3.4.0
-#   pycocotools
+#   torch==2.1.0+cu121          last torch with an mmcv Windows wheel
+#   torchvision==0.16.0+cu121
+#   mmengine==0.10.7            mmdet requires >=0.7.1,<1.0.0
+#   mmcv==2.1.0                 prebuilt win_amd64; mmdet requires >=2.0.0rc4,<2.2.0
+#   mmdet==3.3.0
+#   numpy<2                     mmcv is numpy-1.x ABI
+#   pycocotools==2.0.7          last release built the same way
+#   opencv-python, tqdm, pyyaml, pandas, scipy, colorama, gdown, pytest
 #
-# The EXACT working versions are frozen to `requirements.lock.txt` during Phase 1 on Colab
-# (torch, mmcv, mmdet, mmengine) — record those in results.md.
+# mmengine/mmcv/mmdet are OPTIONAL: they enable `--stack mmdet` (the paper's own framework).
+# If they fail to install, the torchvision stack is complete on its own.
 # ---------------------------------------------------------------------------------------

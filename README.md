@@ -64,81 +64,138 @@ is the identical model with the SAS block removed.
 
 ---
 
-## Stack: torch + torchvision (not mmdetection)
+## Two stacks: torchvision *and* mmdetection
 
-The paper uses **mmdetection**, but OpenMMLab publishes `mmcv` wheels only up to ~torch 2.1 / Python
-3.11 and has been effectively unmaintained since 2023 — on Colab's Python 3.12, `mim install mmcv`
-falls into a source build that fails. This project uses **torchvision's `retinanet_resnet50_fpn`**:
-the same ResNet-50 + FPN + RetinaNet architecture, preinstalled on Colab, **zero installs**. The SAS
-block is framework-agnostic pure torch and is reused verbatim. The trade-off — different anchor/loss/
-NMS defaults, so absolute numbers won't line up with the paper's — is documented in
-[limitations.md](limitations.md).
+The paper uses **mmdetection**. On Colab it is uninstallable — OpenMMLab ships `mmcv` wheels only up
+to ~torch 2.1 / Python 3.11, and Colab runs 3.12, so `mim install mmcv` falls into a failing source
+build. That forced the pivot to **torchvision's `retinanet_resnet50_fpn`**: the same
+ResNet-50 + FPN + RetinaNet architecture, at the cost of different anchor/loss/NMS defaults
+([limitations.md](limitations.md)).
+
+Locally that constraint is gone. OpenMMLab publishes prebuilt **`win_amd64`** wheels, so mmdet
+installs with **no compiler** given the right pins — which `scripts/setup_env.py` handles:
+
+| | pin | why |
+|---|---|---|
+| Python | 3.11 | mmcv wheels cover cp38–cp311 only |
+| torch / torchvision | 2.1.0+cu121 / 0.16.0+cu121 | last torch with an mmcv Windows wheel |
+| mmcv | 2.1.0 | `mmdet/__init__.py` asserts `>=2.0.0rc4, <2.2.0` |
+| mmdet | 3.3.0 | |
+
+So `--stack {torchvision,mmdet}` selects the framework, both pinned to the *same* torch — a
+difference between them is attributable to the detector, not the tensor library. mmdet's wheel also
+ships the CUDA `MultiScaleDeformableAttention` op, retiring the `grid_sample` approximation.
+
+mmdet is installed **last and optionally**: if it fails, the torchvision stack is already complete
+and only `--stack mmdet` becomes unavailable. `SASBlock` is pure torch and is reused verbatim by
+both — `SASBackbone` for torchvision, `SASFPN` for mmdet. The novel code has one implementation.
 
 ---
 
 ## Repository layout
 
 ```
-symformer_tb/            the ONLY novel code (the SAS block)
-  sas.py                 SPE, SymAttention (grid_sample-based), FFN, SASBlock   [pure torch]
-  tv_model.py            RetinaNet-R50-FPN + shared SAS after the FPN           [torchvision]
-  tv_dataset.py          COCO dataset + random hflip for the torchvision API
-  _numpy_ref.py          numpy reference for the mirror/PE math (torch-free oracle)
+symformer_tb/            the ONLY novel science (the SAS block); the rest is plumbing
+  sas.py                 SPE, SymAttention, FFN, SASBlock                    [pure torch]
+  adapters.py            one interface over torchvision + mmdet detectors
+  trainer.py             YOLO-style loop: run dirs, progress bar, AMP, EMA, resume
+  metrics.py             P/R/F1 sweep + COCO mAP + classification metrics    [numpy only]
+  plotting.py            results.png, PR/F1 curves, confusion matrices, batch mosaics
+  cls_head.py            stage-2 classification head on a frozen detector
+  tv_model.py            RetinaNet-R50-FPN + shared SAS after the FPN        [torchvision]
+  mmdet_plugin.py        SASFPN neck registered with mmdet's registry        [mmdet]
+  tv_dataset.py          COCO detection + classification datasets
+  evaluate.py            TB-only / all-images COCO scoring
+  _numpy_ref.py          numpy oracle for the mirror/PE math (torch-free)
+scripts/
+  setup_env.py           builds the pinned .venv; stdlib-only, runs under any Python
+  download_tbx11k.py     fetch + verify + extract the raw archive
 tools/
-  prepare_tbx11k.py      TBX11K -> compact TB-only 512² COCO; has --selftest
-  tv_train.py            training loop; checkpoint + auto-resume for T4 time-outs
-  tv_eval.py             COCO AP/AP50 via pycocotools
+  prepare_tbx11k.py      TBX11K -> compact 512² COCO (--scope tb|all); has --selftest
+  make_dummy_data.py     synthetic fixture so the smoke test runs before any download
+  train.py  val.py       stage-1 training and evaluation
+  train_cls.py           stage-2 classification head
+  ablate.py              Table 8 sweep over cells x seeds -> mean ± std
+  tv_train.py tv_eval.py LEGACY -- kept so the Colab notebook still runs
 tests/
-  test_numpy_ref.py      mirror/PE math — runs locally with numpy only
-  test_sas.py            the 4 required SAS tests + numpy cross-checks           [Colab]
-  test_tv_model.py       RetinaNet+SAS wiring, weight sharing, train/infer       [Colab]
+  test_numpy_ref.py      mirror/PE math                            [numpy only]
+  test_metrics.py        IoU/PR/F1/AUC, hand-computed              [numpy only]
+  test_sas.py            the 4 required SAS tests + numpy cross-checks
+  test_tv_model.py       RetinaNet+SAS wiring, weight sharing
+  test_pipeline.py       adapters, dataset negatives, resume round-trip, cls head
 notebooks/
-  colab_runbook.ipynb    drives the full pipeline on Colab
+  local_runbook.ipynb    the local pipeline -- drop it on a PC and Run All
+  colab_runbook.ipynb    the original Colab PoC
 ```
 
 The ablation is driven by **CLI flags**, not config files:
 `--attention {vanilla,symattention} --pe {none,ape,rpe,spe} --stn/--no-stn --direction {r2l,l2r}`,
-with `--no-sas` for the baseline.
+with `--no-sas` for the baseline. (`configs/` holds the equivalent mmdet configs.)
 
 ---
 
 ## Running it
 
-### Locally — verify the framework-independent logic (no GPU, no PyTorch)
+### Locally — the full pipeline, including the whole dataset (recommended)
+
+Open [`notebooks/local_runbook.ipynb`](notebooks/local_runbook.ipynb), pick **any** Python kernel,
+and Run All. There is no setup step to do first.
+
+The notebook builds its own pinned `.venv` (fetching a standalone Python 3.11 if the machine has
+none), so **the kernel's Python version is irrelevant** — it runs every real step as a subprocess
+and uses only the standard library itself. Needs Windows + an NVIDIA GPU (≥6 GB) + ~70 GB free.
+
+It runs a **full smoke test on generated data before downloading anything**: build → train →
+checkpoint → kill and resume → evaluate → plots, in about a minute. If that cell is green, the rest
+is data and patience.
+
+| Phase | Cold machine |
+|---|---|
+| setup + unit tests + smoke test | ~10 min |
+| download + prepare all 11,200 images | 1–3 h |
+| baseline + SymFormer (24 epochs each) | ~30 min |
+| stage-2 classifier + all-images eval | ~30 min |
+| Table 8 ablation (opt-in, 13 cells × seeds) | overnight |
+
+Scripts can also be driven directly:
 
 ```bash
-pip install -r requirements.txt           # numpy / pillow / opencv / matplotlib only
-python tests/test_numpy_ref.py            # mirror + positional-encoding math   (5 tests)
-python tools/prepare_tbx11k.py --selftest # resize + box-scaling + COCO output  (synthetic)
+python scripts/setup_env.py                                   # build .venv (idempotent)
+python tools/train.py --data-root data/tbx11k_512 --no-sas    # baseline
+python tools/train.py --data-root data/tbx11k_512 \
+    --attention symattention --pe spe --stn --direction r2l   # SymFormer
+python tools/val.py --weights runs/detect/train/weights/best.pt \
+    --data-root data/tbx11k_512 --mode all --cls-ckpt ...     # all-images eval
+python tools/ablate.py --data-root data/tbx11k_512 --seeds 0 1 2
 ```
 
-These are the parts checkable without torch, and both pass. Everything torch-based (the SAS forward
-pass, training, evaluation) runs on Colab.
+Each run writes a self-contained directory:
 
-### On Colab — the full pipeline
+```
+runs/detect/symformer/
+  weights/{best,last}.pt   results.csv   results.png       args.yaml
+  PR_curve.png   F1_curve.png   confusion_matrix.png
+  labels.jpg     train_batch0.jpg        val_batch0_pred.jpg
+```
+
+### Without a GPU or PyTorch — verify the framework-independent logic
+
+```bash
+pip install -r requirements.txt           # numpy / pillow / matplotlib only
+python tests/test_numpy_ref.py            # mirror + positional-encoding math
+python tests/test_metrics.py              # IoU / PR / F1 / AUC, hand-checked
+python tools/prepare_tbx11k.py --selftest # resize + box-scaling + COCO output (synthetic)
+```
+
+### On Colab — the original reduced-scope PoC
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Manas-Maahir/FOP/blob/main/notebooks/colab_runbook.ipynb)
 
-Open [`notebooks/colab_runbook.ipynb`](notebooks/colab_runbook.ipynb) (badge above), set the runtime
-to **GPU**, and run top-to-bottom. It clones the repo, runs the SAS unit tests, builds the compact
-dataset, smoke-tests, then trains and evaluates the baseline, SymFormer, and the ablation cells.
-Training cells auto-resume within a session, so after a time-out just re-run the same cell. A full
-24-epoch run is ~15–20 min.
-
-**Storage split** — free Drive is 15 GB, but the Colab VM has ~100 GB of ephemeral disk:
-
-| What | Where | Size |
-|---|---|---|
-| code / docs | GitHub → `/content/FOP` | ~200 KB |
-| raw TBX11K | **`/content`** (ephemeral — never on Drive) | ~11–30 GB |
-| compact TB-only 512² dataset | **Drive** | ~250–400 MB |
-| checkpoints | **`/content/work`** (ephemeral — never on Drive) | ~300 MB transient |
-| logs (`train_log.jsonl` / `eval_log.jsonl`) — *the results* | **Drive** | a few KB |
-
-Weights are deliberately kept off Drive: Colab's Drive mount turns every delete into a move to
-**Trash**, which counts against the 15 GB quota for 30 days, so pruning ~300 MB/epoch would silently
-trash gigabytes. Because a run is only ~20 min and every AP/AP50 lands in the logs, the **logs are
-the results** and the weights are disposable. Total Drive footprint: **~350 MB**.
+[`notebooks/colab_runbook.ipynb`](notebooks/colab_runbook.ipynb) still works and is the record of how
+the results above were produced. It is TB-subset-only and torchvision-only, and its architecture is
+shaped entirely by Colab's constraints — ephemeral `/content`, a 15 GB Drive quota, weights
+deliberately kept off Drive because Colab's mount turns every delete into a quota-consuming Trash
+move. None of that applies locally, which is why the local runbook exists.
 
 ---
 

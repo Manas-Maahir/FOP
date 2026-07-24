@@ -1,5 +1,15 @@
 #!/usr/bin/env python
-"""Evaluate a checkpoint on TB-val: COCO AP and AP50 (category-agnostic TB detection).
+"""LEGACY (Colab). Superseded by ``tools/val.py`` -- use that one locally.
+
+Kept so ``notebooks/colab_runbook.ipynb`` still runs. ``tools/val.py`` adds the all-images
+evaluation mode, the stage-2 classifier filter, and P/R/F1 alongside AP.
+
+    local equivalent:  python tools/val.py --weights runs/detect/train/weights/best.pt \
+                           --data-root DATA/
+
+---
+
+Evaluate a checkpoint on TB-val: COCO AP and AP50 (category-agnostic TB detection).
 
 This is the metric the whole PoC turns on — the primary claim is that SymFormer's AP50 exceeds the
 baseline's. The SAS config is read from the checkpoint, so you don't have to repeat the flags.

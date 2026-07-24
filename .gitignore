@@ -4,19 +4,29 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
-# Colab / training artifacts (kept on Google Drive, not in the repo)
+# The local training environment, built by scripts/setup_env.py (~6 GB).
+# requirements.lock.txt IS tracked -- it is the record of what actually worked.
+.venv/
+
+# Training artifacts. Run directories hold checkpoints (~300 MB each) alongside their
+# results.csv and figures; the numbers worth keeping get copied into results*.md.
+runs/
 work_dirs/
 tb_runs/
 *.pth
-requirements.lock.txt   # regenerated on Colab in Phase 1
+*.pt
 
-# Data (large; lives on Drive or Colab's ephemeral /content)
+# Data (tens of GB raw, ~3.5 GB prepared)
 data/
 tbx11k_tb512/
 TBX11K/
 *.zip
 
-# Source paper (copyrighted; not needed to run anything — paper.md summarises it).
+# Generated result tables -- regenerated from the run dirs by the notebook's last phase
+results_local.md
+results_ablation.md
+
+# Source paper (copyrighted; not needed to run anything - paper.md summarises it).
 # Delete this line if you want the PDF/DOCX tracked in the repo.
 Paper/
 

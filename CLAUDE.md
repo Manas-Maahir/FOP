@@ -13,9 +13,9 @@ documents the plan we agreed on before coding.
 | Decision | Choice | Why |
 |---|---|---|
 | **Approach** | **Hybrid** | Use the official TBX11K dataset; build SymFormer's novel modules on a maintained detection stack rather than running the authors' old code verbatim or rewriting everything from scratch. |
-| **Detection stack** | **torchvision** (was: mmdetection) | mmcv/mmdet ship wheels only up to ~torch 2.1 / Py 3.11 and are unmaintained since 2023; Colab is on **Py 3.12**, so `mim install mmcv` falls into a failing source build. torchvision's `retinanet_resnet50_fpn` is the same ResNet-50+FPN+RetinaNet architecture, is preinstalled on Colab, and needs **zero installs**. Our SAS block is pure torch → unchanged. |
-| **Scope** | **Core-method PoC** | Reproduce the paper's *central claim*, not the full grid: **SymFormer w/ RetinaNet (ResNet-50) > RetinaNet baseline** on TB detection, plus the **Table 8 ablation**. |
-| **Compute** | **Colab Free (T4)** | Single 16 GB T4 with session time-outs → checkpoint/resume + Google Drive persistence + a compact dataset are mandatory. |
+| **Detection stack** | **both**, via `--stack` | *Colab era:* torchvision only — mmcv ships wheels only up to ~torch 2.1 / Py 3.11 and Colab is on Py 3.12, so `mim install mmcv` fell into a failing source build. *Local era:* OpenMMLab publishes prebuilt **`win_amd64`** wheels, so mmdet installs with no compiler given Py 3.11 + torch 2.1.0 + mmcv 2.1.0. Both stacks are pinned to the **same torch**, so a difference between them is attributable to the detector framework. The SAS block is pure torch and is shared verbatim. |
+| **Scope** | **Core method + stage 2** | *Colab era:* core-method PoC only. *Local era:* the full 11,200-image dataset, so the **stage-2 classification head** (Tables 3–6, incl. specificity) and the **all-images evaluation mode** are in scope. Stage-1 detection still trains on TB images only — that is the paper's own §3.4 choice, not a compute compromise. |
+| **Compute** | **local RTX 3070 Ti (8 GB)**, was Colab T4 | No session time-outs and 120 GB of disk, so the Drive-quota architecture is gone. Half the T4's VRAM, so AMP is on by default and batch 8 is near the ceiling. Multi-seed ablation is now affordable — that is the fix [report.md](report.md) §7 asks for. |
 
 **Success = the trend, not the exact numbers.** We aim to show SymFormer beats the RetinaNet
 baseline on category-agnostic TB detection (AP50/AP) and that **SPE** and **SymAttention** each
@@ -164,10 +164,25 @@ Run sequentially; each phase must finish (or checkpoint) before the next.
 ---
 
 ## 8. Status
+
+**Colab PoC — complete.** Full write-up in [report.md](report.md); headline in [README.md](README.md).
 - [x] Paper read end-to-end; [paper.md](paper.md), this file, and [limitations.md](limitations.md) written.
-- [ ] Environment pinned on Colab.
-- [ ] TB-subset compact dataset (512², COCO) on Drive.
-- [ ] Smoke test.
-- [ ] RetinaNet baseline trained & evaluated.
-- [ ] SymFormer trained & evaluated (primary comparison).
-- [ ] Table 8 ablation.
+- [x] Environment pinned on Colab (torchvision, after the mmdet pivot).
+- [x] TB-subset compact dataset (512², COCO), train 599 / val 200.
+- [x] Smoke test, RetinaNet baseline, SymFormer, 6 of 13 ablation cells.
+- [x] **Result: null.** Every config within 77.7–80.0 AP50, a spread no larger than the
+      single-config run-to-run noise. Underpowered, not broken — see [report.md](report.md) §6.
+
+**Local pipeline — built, verification in progress.** Entry point:
+[notebooks/local_runbook.ipynb](notebooks/local_runbook.ipynb) (drop on a PC, Run All).
+- [x] `scripts/setup_env.py` — pinned Py 3.11 venv, both stacks, stdlib-only bootstrapper.
+- [x] YOLO-style trainer: run dirs, progress bar, metric table, plots, AMP, EMA, SIGINT-safe resume.
+- [x] `--stack {torchvision,mmdet}` behind one adapter interface; `SASFPN` restored from `0c294a0`.
+- [x] `--scope all` prep: 11,200 images, all-images COCO JSONs, stage-2 class labels.
+- [x] Stage-2 classification head + the classifier's false-positive veto in `val.py --mode all`.
+- [x] `tools/ablate.py` — 13 cells × seeds, resumable, reports **mean ± std**.
+- [x] Synthetic-fixture smoke test that runs *before* any download.
+- [ ] Full dataset downloaded and prepared.
+- [ ] Baseline + SymFormer re-run locally (reference: torchvision baseline ≈ 79.1 AP50).
+- [ ] Stage-2 numbers (paper Table 3 shape).
+- [ ] **Multi-seed ablation — the open question.** [report.md](report.md) §7 item 1.
